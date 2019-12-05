@@ -1,3 +1,17 @@
+cropgui (0.3+cjch4) UNRELEASED; urgency=medium
+
+  * Add key controls:
+      - q to quit
+      - n for next image
+      - s to save current crop but remain on this image
+  * Use actual IMCU size when rounding crop edges.
+  * Correct crop edge rounding vs rotation.
+  * Better file output name handling (particularly for 's' above).
+  * Overwrite confirmation.
+  * Consistent chooser parameter order.
+
+ -- Conrad J.C. Hughes (for Debian package stuff) <debbugs@xrad.org>  Thu, 05 Dec 2019 11:34:37 +0000
+
 cropgui (0.3) UNRELEASED; urgency=medium
 
   * Tag a new release to help packagers
