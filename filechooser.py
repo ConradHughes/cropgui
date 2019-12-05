@@ -90,7 +90,7 @@ class Chooser(BaseChooser):
                gtk.STOCK_OPEN, gtk.RESPONSE_OK)
 
     def __init__(self, title, parent):
-        BaseChooser.__init__(self, parent, title)
+        BaseChooser.__init__(self, title, parent)
 
         self.dialog.set_default_response(gtk.RESPONSE_OK)
         self.dialog.set_select_multiple(True)
@@ -130,7 +130,7 @@ class DirChooser(BaseChooser):
                gtk.STOCK_SAVE, gtk.RESPONSE_OK)
 
     def __init__(self, title, parent):
-        BaseChooser.__init__(self, parent, title)
+        BaseChooser.__init__(self, title, parent)
         self.dialog.set_default_response(gtk.RESPONSE_OK)
 
     def set_current_name(self, filename):
