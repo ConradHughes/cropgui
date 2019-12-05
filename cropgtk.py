@@ -238,6 +238,12 @@ class App:
             self.set_busy()
             try:
                 i = Image.open(image_name)
+                # Use IMCU size to round jpeg dragging and cropping.
+                if i.format == "JPEG":
+                    drag.roundW = max(l[1] for l in i.layer) * 8
+                    drag.roundH = max(l[2] for l in i.layer) * 8
+                else:
+                    drag.roundW = drag.roundH = 1
                 drag.w, drag.h = i.size
                 scale = 1
                 scale = max (scale, (drag.w-1)/max_w+1)

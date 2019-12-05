@@ -1,3 +1,4 @@
+# coding: utf-8
 #    a part of cropgui, a graphical front-end for lossless jpeg cropping
 #    Copyright (C) 2009 Jeff Epler <jepler@unpythonic.net>
 #    This program is free software; you can redistribute it and/or modify
@@ -92,7 +93,8 @@ class DragManagerBase(object):
         self.render_flag = 0
         self.show_handles = True
         self.state = DRAG_NONE
-        self.round = 8
+        self.roundW = None
+        self.roundH = None
         self.image = None
         self.w = 0
         self.h = 0
@@ -118,7 +120,6 @@ class DragManagerBase(object):
 
     def image_or_rotation_changed(self):
         self._image = image = self.apply_rotation(self._orig_image)
-        self.apply_rotation(image)
         self.top = 0
         self.left = 0
         self.right = self.w
@@ -131,12 +132,15 @@ class DragManagerBase(object):
         self.image_set()
         self.render()
 
-    def fix(self, a, b, lim):
-        a, b = sorted((b,a))
+    def fix(self, a, b, lim, block, inverted):
+        if inverted:
+            a, b = sorted((lim-a,lim-b))
+            b = ((b + block - 1) / block)*block
+            a, b = lim-b, lim-a
+        else:
+            a, b = sorted((a,b))
+            a = (a / block)*block
         a = clamp(a, 0, lim)
-        b = clamp(b, 0, lim)
-        a = (a / self.round)*self.round
-        b = (b / self.round)*self.round
         return int(a), int(b)
 
     def get_corners(self):
@@ -183,8 +187,11 @@ class DragManagerBase(object):
         self.set_crop (top, left, right, bottom)
 
     def set_crop(self, top, left, right, bottom):
-        self.top, self.bottom = self.fix(top, bottom, self.h)
-        self.left, self.right = self.fix(left, right, self.w)
+        # 1 = unrotated; 8 = 90° anticlockwise; 3 = 180°;
+        # 6 = 270° = 90° clockwise
+        (roundW, roundH) = (self.roundW, self.roundH) if self.rotation in (1,3) else (self.roundH, self.roundW)
+        self.top, self.bottom = self.fix(top, bottom, self.h, self.roundH, self.rotation in (3,8))
+        self.left, self.right = self.fix(left, right, self.w, self.roundW, self.rotation in (3,6))
         self.render()
 
     def get_image(self):
