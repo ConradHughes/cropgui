@@ -40,10 +40,24 @@ def _(s): return s  # TODO: i18n
     DRAG_BL, DRAG_B, DRAG_BR
 ) = list(range(10))
 
+
+POPULAR_FORMATS = ((1, 1), (4, 3), (3, 2), (16, 9))
+
+def closest_ratio(ratio, formats=POPULAR_FORMATS):
+    n, d = min(formats, key=lambda f: abs(f[0]/f[1]-ratio))	# find the format closest to the ratio
+    s = ratio*d-n
+    return f'{n}{s:+.2f}', d
+
 def describe_ratio(a, b):
     if a == 0 or b == 0: return "degenerate"
-    if a > b: return "%.2f:1" % (a*1./b)
-    return "1:%.2f" % (b*1./a)
+    if a > b:
+        ratio = a*1./b
+        f,d = closest_ratio(ratio)
+        return f'{ratio:.2f}:1 | {f}:{d}'
+    else:
+        ratio = b*1./a
+        f,d = closest_ratio(ratio)
+        return f'1:{ratio:.2f} | {d}:{f}'
 
 def clamp(value, low, high):
     if value < low: return low
@@ -169,7 +183,7 @@ class CropTask(object):
 
             print(" ".join(command))
             subprocess.call(command)
-            subprocess.call(["exiftool", "-overwrite_original", "-Orientation=1", "-n", target])
+            subprocess.call(["exiftool", "-overwrite_original", "-Orientation=1", "-ifd1:all=", "-n", target])
             self.log.log(_("Cropped to %s") % shortname)
 
 class DragManagerBase(object):
@@ -224,11 +238,14 @@ class DragManagerBase(object):
         else:
             self.top, self.bottom = self.prev_top, self.prev_bottom
             self.left, self.right = self.prev_left, self.prev_right
-        blurred = image.copy()
-        mult = len(self.image.mode) # replicate filter for L, RGB, RGBA
-        self.blurred = image.copy().filter(
-            ImageFilter.SMOOTH_MORE).point([x/2 for x in range(256)] * mult)
-        self.xor = image.copy().point([x ^ 128 for x in range(256)] * mult)
+        if image.mode == 'P':
+            image_rgb = image.copy().convert("RGB")
+        else:
+            image_rgb = image
+        mult = len(image_rgb.mode) # replicate filter for L, RGB, RGBA
+        self.blurred = image_rgb.copy().filter(
+            ImageFilter.SMOOTH_MORE).point([x//2 for x in range(256)] * mult)
+        self.xor = image_rgb.copy().point([x ^ 128 for x in range(256)] * mult)
         self.image_set()
         self.render()
 
@@ -321,8 +338,8 @@ class DragManagerBase(object):
         image = Image.composite(self.image, self.blurred, mask)
 
         if self.show_handles:
-            dx = (r - l) / 4
-            dy = (b - t) / 4
+            dx = (r - l) / 3
+            dy = (b - t) / 3
 
             mask = Image.new('1', self.image.size, 1)
             draw = ImageDraw.Draw(mask)
@@ -331,11 +348,11 @@ class DragManagerBase(object):
             draw.line([l, b, r, b], fill=0)
             draw.line([l, t, l, b], fill=0)
             draw.line([r, t, r, b], fill=0)
-
-            draw.line([l+dx, t, l+dx, t+dy, l, t+dy], fill=0)
-            draw.line([r-dx, t, r-dx, t+dy, r, t+dy], fill=0)
-            draw.line([l+dx, b, l+dx, b-dy, l, b-dy], fill=0)
-            draw.line([r-dx, b, r-dx, b-dy, r, b-dy], fill=0)
+            
+            draw.line([l, t+dy, r, t+dy], fill=0)
+            draw.line([l, b-dy, r, b-dy], fill=0)
+            draw.line([l+dx, t, l+dx, b], fill=0)
+            draw.line([r-dx, t, r-dx, b], fill=0)
 
             image = Image.composite(image, self.xor, mask)
         return image
@@ -418,6 +435,15 @@ class DragManagerBase(object):
             new_right = self.r0 + dx
         if self.state in (DRAG_BL, DRAG_B, DRAG_BR, DRAG_C):
             new_bottom = self.b0 + dy
+        # Keep every type of drag within the image bounds
+        if new_top < 0:
+            new_top = 0
+        if new_left < 0:
+            new_left = 0
+        if new_right > self.w:
+            new_right = self.w
+        if new_bottom > self.h:
+            new_bottom = self.h
         # A drag never moves left past right and so on
         if self.state != DRAG_C:
             new_top = min(self.bottom-1, new_top)
