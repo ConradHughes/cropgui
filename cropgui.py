@@ -264,9 +264,17 @@ def set_busy(new_busy=True):
         do_crop.configure(state="normal")
     app.update_idletasks()
 
+cropped_any_image = False
 try:
+    # Check *only* the first arg to see if it is -round-rb
+    round_right_and_bottom = False
+    if sys.argv[1] == "-round-rb":
+        round_right_and_bottom = True
+        args = [arg for arg in sys.argv[0:] if arg != "-round-rb"]
+        sys.argv = args
     for image_name in image_names():
         drag.save_prev_crop()
+        drag.round_right_and_bottom = round_right_and_bottom
         # load new image
         set_busy()
         image = Image.open(image_name)
@@ -299,9 +307,12 @@ try:
             rotation=drag.rotation,
             target=target,
         ))
+        cropped_any_image = True
 finally:
     task.done()
 
+if not cropped_any_image:
+    raise SystemExit(1)
 # 1. open image
 # 2. choose 1/2, 1/4, 1/8 scaling so that resized image fits onscreen
 # 3. load image at requested size

@@ -28,9 +28,9 @@ from gi.repository import Gdk as gdk
 import filechooser
 from gi.repository import GdkPixbuf as GdkPixbuf
 
+import argparse
 import sys
 import traceback
-import imghdr
 
 # otherwise, on hardy the user is shown spurious "[application] closed
 # unexpectedly" messages but denied the ability to actually "report [the]
@@ -140,23 +140,76 @@ class DragManager(DragManagerBase):
         self.result = -1
         self.loop.quit()
 
+    # This does zoom in, in the sense that the GTK window gets twice as big.
+    # What I really want to do is to either 
+    # (a) crop the thumbnail but map the coords back to the original image;
+    # (b) show the image in a scrolled window (see, for example, 
+    #     Gtk.ScrolledWindow); or
+    # (c) see if I can define a viewport to display just the uncropped part 
+    #     of the image.
+    # But this is still useful, in that
+    # (a) in some cases the initial zoom factor could be bigger and still fit, and
+    # (b) the user can move the overly-large window around using the window manager
+    #     to get at any edge.
+    # TODO: although the GUI window automagically increases in size when
+    #       zoom("in") is called, the window doesn't shrink on zoom("out").
+    #       This should probably be fixed.
+    # TODO: it is possible the original image has disappeared.  Open in try/except block.
+    def zoom(self, in_out):
+        if in_out == "in":
+            if self.scale > 1:
+                new_scale = self.scale // 2;
+            else:
+                return
+        else:
+            new_scale = self.scale * 2;
+
+        # These values get reset below; save and restore them explicitly.
+        t, l, r, b = self.top, self.left, self.right, self.bottom
+
+        # In tests, using a copy of the original saved in run() just didn't work
+        # for (at least) rotated images.  So re-open the file.
+        image = self.copy_of_original
+        # Must reset .w and .h since those may have been "rotated".
+        self.w, self.h = image.size
+        thumbnail = image.copy()
+        thumbnail.thumbnail((self.w // new_scale, self.h // new_scale))
+        self.image = thumbnail
+        self.rotation = 1
+        rotation = self.original_rotation
+        if rotation in (3,6,8):
+            while self.rotation != rotation:
+                self.rotate_ccw()
+        self.scale = new_scale
+        self.set_crop(t, l, r, b)
+
+
+    # TODO: should the coords be limited to [min..max] here or in set_crop? 
     def key(self, w, e):
         if e.keyval == gdk.KEY_Escape: self.escape()
         elif e.keyval == gdk.KEY_Return: self.done()
         elif e.string:
+            if self.round_right_and_bottom:
+                b_delta = self.round_y
+                r_delta = self.round_x
+            else:
+                b_delta = r_delta = 1
             if e.string == 'n': self.escape()
             elif e.string == 'q': self.close()
             elif e.string == 's': self.save_and_stay()
             elif e.string in ',<': self.rotate_ccw()
             elif e.string in '.>': self.rotate_cw()
-            elif e.string in 'h': self.set_crop(self.top, self.left - self.round_x, self.right, self.bottom)
-            elif e.string in 'j': self.set_crop(self.top + self.round_y, self.left, self.right, self.bottom)
-            elif e.string in 'k': self.set_crop(self.top - self.round_y, self.left, self.right, self.bottom)
-            elif e.string in 'l': self.set_crop(self.top, self.left + self.round_x, self.right, self.bottom)
-            elif e.string in 'H': self.set_crop(self.top, self.left, self.right - 1, self.bottom)
-            elif e.string in 'J': self.set_crop(self.top, self.left, self.right, self.bottom + 1)
-            elif e.string in 'K': self.set_crop(self.top, self.left, self.right, self.bottom - 1)
-            elif e.string in 'L': self.set_crop(self.top, self.left, self.right + 1, self.bottom)
+            elif e.string in 'h': self.set_crop(self.top, max(0, self.left - self.round_x), self.right, self.bottom)
+            elif e.string in 'j': self.set_crop(min(self.h, self.top + self.round_y), self.left, self.right, self.bottom)
+            elif e.string in 'k': self.set_crop(max(0, self.top - self.round_y), self.left, self.right, self.bottom)
+            elif e.string in 'l': self.set_crop(self.top, min(self.h, self.left + self.round_x), self.right, self.bottom)
+            elif e.string in 'H': self.set_crop(self.top, self.left, max(0, self.right - r_delta), self.bottom)
+            elif e.string in 'J': self.set_crop(self.top, self.left, self.right, min(self.h, self.bottom + b_delta))
+            elif e.string in 'K': self.set_crop(self.top, self.left, self.right, max(0, self.bottom - b_delta))
+            elif e.string in 'L': self.set_crop(self.top, self.left, min(self.w, self.right + r_delta), self.bottom)
+            elif e.string == 'z': self.zoom("in")
+            elif e.string == 'Z': self.zoom("out")
+
         # Don't know whether other event handlers need it too, but if
         # this doesn't return True (True prevents further handlers from
         # being invoked), a return somehow double-triggers self.done(),
@@ -228,12 +281,23 @@ class DragManager(DragManagerBase):
         return self.result
 
 display = gdk.Display().get_default()
+# TODO: get the monitor where the mouse is, not necessarily #0.
 wa = display.get_monitor(0).get_workarea()
 max_h = wa.height - 192
 max_w = wa.width - 64
 
+def get_pointer(widget):
+    window = widget.get_window()
+    if window is None:
+        return None
+    display = window.get_display()
+    pointer = display.get_default_seat().get_pointer()
+    return window.get_device_position(pointer)
+
 class App:
-    def __init__(self):
+    def __init__(self, *, round_right_and_bottom=False, files=[]):
+        self.round_right_and_bottom = round_right_and_bottom
+        self.files = files
         self.builder = gtk.Builder()
         self.builder.add_from_file(gladefile)
         #self.glade = gtk.glade.XML(gladefile)
@@ -256,20 +320,25 @@ class App:
         self.drag.busy = is_busy
         i = self['image1']
         if i:
-            self.drag.idle_motion(*i.get_pointer())
+            pointer = get_pointer(i)
+            if pointer is not None:
+                self.drag.idle_motion(pointer.x, pointer.y)
 
     def run(self):
         drag = self.drag
         task = self.task
-
         prev_name = None
+        cropped_any_image = False
+
         for image_name in self.image_names():
             drag.save_prev_crop()
+            drag.round_right_and_bottom = self.round_right_and_bottom
             self['window1'].set_title(
                 _("%s - CropGTK") % os.path.basename(image_name))
             self.set_busy()
             try:
                 image = Image.open(image_name)
+                drag.copy_of_original = image.copy()   # Needed by zoom()
                 drag.round_x, drag.round_y = image_round(image)
                 drag.w, drag.h = image.size
                 scale = 1
@@ -286,10 +355,11 @@ class App:
                 m.run()
                 m.destroy()
                 continue
-            image_type = imghdr.what(image_name)
+            image_type = image.format.lower() if image.format else "png"
             drag.image = thumbnail
             drag.rotation = 1
             rotation = image_rotation(image)
+            drag.original_rotation = rotation   # Needed by zoom()
             if rotation in (3,6,8):
                 while drag.rotation != rotation:
                     drag.rotate_ccw()
@@ -319,11 +389,14 @@ class App:
                     rotation=drag.rotation,
                     target=target,
                 ))
+                cropped_any_image = True
             if v == -1: break # user closed app
+        if not cropped_any_image:
+            raise SystemExit(1)
 
     def image_names(self):
-        if len(sys.argv) > 1:
-            for i in sys.argv[1:]: yield i
+        if self.files:
+            yield from self.files
         else:
             c = filechooser.Chooser(_("Select images to crop"), self['window1'])
             lastdir = None
@@ -363,7 +436,12 @@ class App:
         elif e.lower() == "." + image_type: return r
         else: return e + "." + image_type
 
-app = App()
+parser = argparse.ArgumentParser(description="Losslessly crop images")
+parser.add_argument("-round-rb", default=False, action="store_true", dest="round_right_and_bottom", help="Round the right and bottom coordinates to MCU boundaries")
+parser.add_argument('files', metavar='FILE', nargs='*', type=str, help="Files to be cropped")
+args = parser.parse_args()
+
+app = App(round_right_and_bottom=args.round_right_and_bottom, files=args.files)
 try:
     app.run()
 finally:
